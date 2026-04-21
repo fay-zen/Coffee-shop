@@ -173,8 +173,7 @@ const NB = (() => {
       document.body.dataset.page = doc.body.dataset.page || '';
       document.body.dataset.active = doc.body.dataset.active || '';
       document.body.classList.remove('page-ready');
-      syncActiveNav();
-      if (replace) history.replaceState({ href: url.href }, '', url.href);
+        if (replace) history.replaceState({ href: url.href }, '', url.href);
       else history.pushState({ href: url.href }, '', url.href);
       route();
       window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
@@ -548,38 +547,15 @@ const NB = (() => {
       </article>`;
   }
 
-  function renderSharedLayout() {
-    const header = qs('[data-header]');
-    const footer = qs('[data-footer]');
-    if (header) header.outerHTML = siteHeader(document.body.dataset.active || '');
-    if (footer) footer.outerHTML = siteFooter();
-  }
-
-  function syncActiveNav() {
-    const active = document.body.dataset.active || '';
-    qsa('.main-nav .nav-link').forEach(link => {
-      const href = link.getAttribute('href') || '';
-      const page = href.split('.html')[0].replace(/^.*\//, '');
-      const normalized = page === 'index' ? 'home' : page;
-      link.classList.toggle('active', normalized === active);
-    });
-  }
-
   function mountShared() {
     seed();
-    renderSharedLayout();
     updateCartBadge();
     renderFavoritesCount();
-    syncActiveNav();
     if (sharedBound) return;
     sharedBound = true;
     document.addEventListener('click', e => {
       const addBtn = e.target.closest('[data-add]');
       const favBtn = e.target.closest('[data-fav]');
-      const navToggle = e.target.closest('[data-nav-toggle]');
-      const navClose = e.target.closest('[data-nav-close],[data-nav-overlay],.main-nav .nav-link');
-      if (navToggle) document.body.classList.add('nav-open');
-      if (navClose) document.body.classList.remove('nav-open');
       if (addBtn) addToCart(addBtn.dataset.add, 1);
       if (favBtn) {
         const id = favBtn.dataset.fav;
@@ -587,7 +563,6 @@ const NB = (() => {
         favBtn.classList.toggle('active');
       }
     });
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') document.body.classList.remove('nav-open'); });
   }
 
   function initHome() {
