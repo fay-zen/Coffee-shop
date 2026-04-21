@@ -6,7 +6,9 @@ const NB = (() => {
     favorites: 'nb_favorites_v2',
     profile: 'nb_profile_v2',
     riders: 'nb_riders_v2',
-    notifications: 'nb_notifications_v2'
+    notifications: 'nb_notifications_v2',
+    addresses: 'nb_addresses_v2',
+    promos: 'nb_promos_v2'
   };
 
   const icon = (name, cls = 'icon') => {
@@ -87,6 +89,138 @@ const NB = (() => {
   const get = (k, d) => JSON.parse(localStorage.getItem(k) || JSON.stringify(d));
   const set = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 
+  const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function pageLoader() {
+    let loader = qs('#page-loader');
+    if (!loader) {
+      loader = document.createElement('div');
+      loader.id = 'page-loader';
+      loader.className = 'page-loader';
+      loader.innerHTML = '<div class="page-loader-inner"><div class="page-loader-dot"></div><div class="page-loader-text">Loading</div></div>';
+      document.body.appendChild(loader);
+    }
+    return loader;
+  }
+
+  function showPageLoader() { pageLoader().classList.add('show'); }
+  function hidePageLoader() { qs('#page-loader')?.classList.remove('show'); }
+
+  function animateBadge(selector) {
+    qsa(selector).forEach(el => {
+      el.classList.remove('bump');
+      void el.offsetWidth;
+      el.classList.add('bump');
+    });
+  }
+
+  function decorateMotion(root = document) {
+    qsa('.hero-copy,.hero-media,.page-head,.section-head,.split-head,.product-card,.bundle-card,.category-card,.panel,.metric,.history-row,.mini-card,.note-item,.board-card,.rider-card,.cart-row,.promo-card,.receipt,.support-grid .panel,.faq-list details,.timeline-step', root).forEach((el, index) => {
+      if (el.hasAttribute('data-animate')) return;
+      el.setAttribute('data-animate', 'stagger');
+      el.style.transitionDelay = `${Math.min(index * 35, 260)}ms`;
+    });
+    qsa('.hero-copy,.page-head', root).forEach(el => el.setAttribute('data-animate', 'left'));
+    qsa('.hero-media,.sticky,.receipt,.success-card', root).forEach(el => el.setAttribute('data-animate', 'right'));
+    qsa('.product-card,.bundle-card,.category-card,.metric,.promo-card,.mini-card,.status-card,.board-card', root).forEach(el => el.setAttribute('data-animate', 'zoom'));
+  }
+
+  function startObserver() {
+    if (prefersReducedMotion()) {
+      qsa('[data-animate]').forEach(el => el.classList.add('in-view'));
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in-view');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: .12, rootMargin: '0px 0px -8% 0px' });
+    qsa('[data-animate]').forEach(el => observer.observe(el));
+  }
+
+  let navBound = false;
+  let sharedBound = false;
+
+  function isAjaxEligible(url) {
+    const ext = url.pathname.split('.').pop()?.toLowerCase();
+    return url.origin === location.origin && (!ext || ext === 'html') && !url.hash;
+  }
+
+  async function ajaxNavigate(href, { replace = false } = {}) {
+    const url = new URL(href, location.href);
+    if (!isAjaxEligible(url)) {
+      location.href = url.href;
+      return;
+    }
+    showPageLoader();
+    document.body.classList.add('page-leaving');
+    document.body.classList.remove('nav-open');
+    try {
+      const res = await fetch(url.pathname + url.search, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const incomingMain = doc.querySelector('main.page');
+      const currentMain = document.querySelector('main.page');
+      if (!incomingMain || !currentMain) throw new Error('Missing page shell');
+      currentMain.replaceWith(incomingMain);
+      const incomingModal = doc.querySelector('#modal');
+      const currentModal = document.querySelector('#modal');
+      if (incomingModal && currentModal) currentModal.replaceWith(incomingModal);
+      document.title = doc.title || document.title;
+      document.body.dataset.page = doc.body.dataset.page || '';
+      document.body.dataset.active = doc.body.dataset.active || '';
+      document.body.classList.remove('page-ready');
+      syncActiveNav();
+      if (replace) history.replaceState({ href: url.href }, '', url.href);
+      else history.pushState({ href: url.href }, '', url.href);
+      route();
+      window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    } catch (err) {
+      location.href = url.href;
+    } finally {
+      document.body.classList.remove('page-leaving');
+      hidePageLoader();
+    }
+  }
+
+  function wirePageTransitions() {
+    document.body.classList.add('page-ready');
+    hidePageLoader();
+    if (navBound) return;
+    navBound = true;
+    document.addEventListener('click', e => {
+      const link = e.target.closest('a[href]');
+      if (!link) return;
+      const href = link.getAttribute('href');
+      if (!href || href.startsWith('#') || link.target === '_blank' || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || link.hasAttribute('download')) return;
+      const url = new URL(link.href, location.href);
+      if (!isAjaxEligible(url)) return;
+      if (url.pathname === location.pathname && url.search === location.search) return;
+      e.preventDefault();
+      ajaxNavigate(url.href);
+    });
+    window.addEventListener('popstate', () => ajaxNavigate(location.href, { replace: true }));
+  }
+
+  function renderProductSkeleton(count = 4) {
+    return Array.from({ length: count }, () => `
+      <article class="product-card skeleton-card">
+        <div class="product-media skeleton"></div>
+        <div class="product-body">
+          <div class="skeleton skeleton-line short"></div>
+          <div class="skeleton skeleton-line mid"></div>
+          <div class="skeleton skeleton-line short"></div>
+          <div class="product-actions">
+            <div class="btn skeleton" style="width:42px;height:42px"></div>
+            <div class="btn skeleton" style="width:120px;height:44px"></div>
+          </div>
+        </div>
+      </article>`).join('');
+  }
+
   function seed() {
     if (!localStorage.getItem(STORAGE.products)) {
       const products = baseProducts.map((p, i) => ({
@@ -114,6 +248,19 @@ const NB = (() => {
     if (!localStorage.getItem(STORAGE.profile)) {
       set(STORAGE.profile, { name: 'Mark Minero', phone: '0917 000 0000', address: 'Diliman, Quezon City' });
     }
+    if (!localStorage.getItem(STORAGE.addresses)) {
+      set(STORAGE.addresses, [
+        { id: uid('ADR'), label: 'Home', text: 'Diliman, Quezon City', covered: true },
+        { id: uid('ADR'), label: 'Office', text: 'Pasay City, Metro Manila', covered: true }
+      ]);
+    }
+    if (!localStorage.getItem(STORAGE.promos)) {
+      set(STORAGE.promos, [
+        { code: 'WELCOME10', type: 'percent', value: 10, active: true },
+        { code: 'LESS50', type: 'fixed', value: 50, active: true },
+        { code: 'FREESHIP', type: 'delivery', value: 49, active: true }
+      ]);
+    }
     if (!localStorage.getItem(STORAGE.cart)) set(STORAGE.cart, []);
     if (!localStorage.getItem(STORAGE.favorites)) set(STORAGE.favorites, []);
     if (!localStorage.getItem(STORAGE.notifications)) set(STORAGE.notifications, [
@@ -137,9 +284,13 @@ const NB = (() => {
   function getFavorites() { return get(STORAGE.favorites, []); }
   function getRiders() { return get(STORAGE.riders, []); }
   function getProfile() { return get(STORAGE.profile, {}); }
+  function getAddresses() { return get(STORAGE.addresses, []); }
+  function getPromos() { return get(STORAGE.promos, []); }
 
   function updateCartBadge() {
-    qsa('[data-cart-count]').forEach(el => el.textContent = getCart().reduce((a, b) => a + b.qty, 0));
+    const count = getCart().reduce((a, b) => a + b.qty, 0);
+    qsa('[data-cart-count]').forEach(el => { el.textContent = count; el.hidden = count < 1; });
+    if (count > 0) animateBadge('[data-cart-count]');
   }
 
   function addToast(text) {
@@ -165,6 +316,7 @@ const NB = (() => {
       set(STORAGE.favorites, fav);
       addToast('Saved');
       renderFavoritesCount();
+      animateBadge('[data-fav-count]');
     }
   }
   function removeFavorite(id) {
@@ -172,7 +324,8 @@ const NB = (() => {
     renderFavoritesCount();
   }
   function renderFavoritesCount() {
-    qsa('[data-fav-count]').forEach(el => el.textContent = getFavorites().length);
+    const count = getFavorites().length;
+    qsa('[data-fav-count]').forEach(el => { el.textContent = count; el.hidden = count < 1; });
   }
 
   function addToCart(productId, qty = 1, opts = {}) {
@@ -184,6 +337,7 @@ const NB = (() => {
     set(STORAGE.cart, cart);
     updateCartBadge();
     addToast('Added');
+    animateBadge('[data-cart-count]');
   }
 
   function setCartQty(key, qty) {
@@ -206,6 +360,42 @@ const NB = (() => {
     });
   }
 
+  function isCoveredAddress(address = '') {
+    return /(quezon city|qc|manila|pasay|makati|taguig)/i.test(address);
+  }
+
+  function applyPromoCode(code, subtotal, delivery) {
+    const promo = getPromos().find(p => p.code.toUpperCase() === String(code || '').trim().toUpperCase() && p.active);
+    if (!promo) return { promo: null, discount: 0, error: code ? 'Invalid promo code' : '' };
+    let discount = 0;
+    if (promo.type === 'percent') discount = Math.round(subtotal * (promo.value / 100));
+    if (promo.type === 'fixed') discount = promo.value;
+    if (promo.type === 'delivery') discount = Math.min(delivery, promo.value);
+    return { promo, discount: Math.min(subtotal + delivery, discount), error: '' };
+  }
+
+  function adjustStockForOrder(items, direction = -1) {
+    const products = getProducts();
+    items.forEach(item => {
+      const p = products.find(x => x.id === item.productId);
+      if (!p) return;
+      p.stock = Math.max(0, Number(p.stock || 0) + (direction * Number(item.qty || 0)));
+    });
+    set(STORAGE.products, products);
+  }
+
+  function restoreOrderStock(order) {
+    if (!order || order.stockRestored) return;
+    adjustStockForOrder(order.items, 1);
+    order.stockRestored = true;
+  }
+
+  function deductOrderStock(order) {
+    if (!order || order.stockDeducted) return;
+    adjustStockForOrder(order.items, -1);
+    order.stockDeducted = true;
+  }
+
   function chooseRider() {
     const riders = getRiders();
     const available = riders.filter(r => r.status === 'Available').sort((a, b) => a.orders - b.orders);
@@ -222,7 +412,7 @@ const NB = (() => {
     set(STORAGE.notifications, items.slice(0, 12));
   }
 
-  function createOrder({ seedOnly = false, name, phone, address, payment, items, status = 'Queued' }) {
+  function createOrder({ seedOnly = false, name, phone, address, payment, items, status = 'Queued', promoCode = '', addressId = '', paymentProof = '' }) {
     const products = getProducts();
     const enriched = items.map(i => {
       const p = products.find(x => x.id === i.productId) || { price: 0, name: 'Item' };
@@ -234,26 +424,40 @@ const NB = (() => {
       };
     });
     const subtotal = enriched.reduce((a, b) => a + b.total, 0);
-    const delivery = 49;
+    const delivery = subtotal ? 49 : 0;
+    const serviceFee = subtotal ? 15 : 0;
+    const promoState = applyPromoCode(promoCode, subtotal, delivery);
+    const discount = promoState.discount || 0;
     const rider = chooseRider();
     const number = uid('ORD');
     const stages = ['Queued', 'Preparing', 'On Delivery', 'Delivered'];
-    const stageIndex = stages.indexOf(status);
+    const stageIndex = Math.max(0, stages.indexOf(status));
+    const paymentStatus = payment === 'GCash' ? (paymentProof ? 'Pending Verification' : 'Awaiting Upload') : 'Pending Cash Collection';
     const order = {
       id: number,
-      customer: { name, phone, address },
+      customer: { name, phone, address, addressId },
       payment,
+      paymentProof,
+      paymentStatus,
       items: enriched,
       subtotal,
       delivery,
-      total: subtotal + delivery,
+      serviceFee,
+      discount,
+      promoCode: promoState.promo?.code || '',
+      total: Math.max(0, subtotal + delivery + serviceFee - discount),
       status,
       rider: rider ? { id: rider.id, name: rider.name, zone: rider.zone } : null,
       createdAt: new Date().toISOString(),
       eta: status === 'Delivered' ? 'Done' : '25 min',
       history: stages.slice(0, stageIndex + 1).map(s => ({ label: s, at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })),
-      mapStep: status === 'On Delivery' ? 66 : status === 'Delivered' ? 100 : 28
+      mapStep: status === 'On Delivery' ? 66 : status === 'Delivered' ? 100 : 28,
+      refundStatus: 'None',
+      cancellation: null,
+      stockDeducted: false,
+      stockRestored: false
     };
+    deductOrderStock(order);
     if (!seedOnly) {
       const orders = getOrders();
       orders.unshift(order);
@@ -261,6 +465,7 @@ const NB = (() => {
       set(STORAGE.cart, []);
       pushNotif('New Order');
       pushNotif('Rider Assigned');
+      if (payment === 'GCash') pushNotif('Payment Verification Pending');
     }
     return order;
   }
@@ -273,9 +478,38 @@ const NB = (() => {
     order.history.push({ label: nextStatus, at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
     order.mapStep = nextStatus === 'Preparing' ? 25 : nextStatus === 'On Delivery' ? 70 : 100;
     order.eta = nextStatus === 'Delivered' ? 'Done' : nextStatus === 'On Delivery' ? '12 min' : '25 min';
-    if (nextStatus === 'Delivered') pushNotif('Delivered');
+    if (nextStatus === 'Delivered') {
+      if (order.payment === 'GCash' && order.paymentStatus === 'Verified') order.paymentStatus = 'Paid';
+      if (order.payment === 'Cash') order.paymentStatus = 'Paid';
+      pushNotif('Delivered');
+    }
     set(STORAGE.orders, orders);
   }
+
+  function setOrderPaymentStatus(id, paymentStatus) {
+    const orders = getOrders();
+    const order = orders.find(o => o.id === id);
+    if (!order) return;
+    order.paymentStatus = paymentStatus;
+    order.history.push({ label: `Payment: ${paymentStatus}`, at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+    set(STORAGE.orders, orders);
+  }
+
+  function cancelOrder(id, reason = 'Customer request') {
+    const orders = getOrders();
+    const order = orders.find(o => o.id === id);
+    if (!order || ['Delivered', 'Cancelled'].includes(order.status)) return;
+    order.status = 'Cancelled';
+    order.cancellation = { reason, at: new Date().toISOString() };
+    order.history.push({ label: 'Cancelled', at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+    restoreOrderStock(order);
+    pushNotif('Order Cancelled');
+    set(STORAGE.orders, orders);
+  }
+
+  function requestRefund() { return false; }
+
+  function processRefund() { return false; }
 
   function incomeRange() {
     const orders = getOrders().filter(o => o.status === 'Delivered' || o.status === 'On Delivery' || o.status === 'Preparing' || o.status === 'Queued');
@@ -314,20 +548,38 @@ const NB = (() => {
       </article>`;
   }
 
+  function renderSharedLayout() {
+    const header = qs('[data-header]');
+    const footer = qs('[data-footer]');
+    if (header) header.outerHTML = siteHeader(document.body.dataset.active || '');
+    if (footer) footer.outerHTML = siteFooter();
+  }
+
+  function syncActiveNav() {
+    const active = document.body.dataset.active || '';
+    qsa('.main-nav .nav-link').forEach(link => {
+      const href = link.getAttribute('href') || '';
+      const page = href.split('.html')[0].replace(/^.*\//, '');
+      const normalized = page === 'index' ? 'home' : page;
+      link.classList.toggle('active', normalized === active);
+    });
+  }
+
   function mountShared() {
     seed();
+    renderSharedLayout();
     updateCartBadge();
     renderFavoritesCount();
-    const openNav = () => document.body.classList.add('nav-open');
-    const closeNav = () => document.body.classList.remove('nav-open');
-    qs('[data-nav-toggle]')?.addEventListener('click', openNav);
-    qs('[data-nav-close]')?.addEventListener('click', closeNav);
-    qs('[data-nav-overlay]')?.addEventListener('click', closeNav);
-    qsa('.main-nav .nav-link').forEach(link => link.addEventListener('click', closeNav));
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeNav(); });
+    syncActiveNav();
+    if (sharedBound) return;
+    sharedBound = true;
     document.addEventListener('click', e => {
       const addBtn = e.target.closest('[data-add]');
       const favBtn = e.target.closest('[data-fav]');
+      const navToggle = e.target.closest('[data-nav-toggle]');
+      const navClose = e.target.closest('[data-nav-close],[data-nav-overlay],.main-nav .nav-link');
+      if (navToggle) document.body.classList.add('nav-open');
+      if (navClose) document.body.classList.remove('nav-open');
       if (addBtn) addToCart(addBtn.dataset.add, 1);
       if (favBtn) {
         const id = favBtn.dataset.fav;
@@ -335,21 +587,53 @@ const NB = (() => {
         favBtn.classList.toggle('active');
       }
     });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') document.body.classList.remove('nav-open'); });
   }
 
   function initHome() {
     const products = getProducts();
-    qs('#best-grid').innerHTML = products.slice(0, 8).map(productCard).join('');
+    qs('#best-grid').innerHTML = renderProductSkeleton(8);
+    requestAnimationFrame(() => {
+      qs('#best-grid').innerHTML = products.slice(0, 8).map(productCard).join('');
+      decorateMotion(qs('#best-grid'));
+      startObserver();
+    });
     qs('#bundle-grid').innerHTML = [
       {title:'Tea + Fries', price:'₱239', img:products[1].image},
       {title:'Meal + Latte', price:'₱309', img:products[33].image},
       {title:'Crew Set', price:'₱559', img:products[25].image}
     ].map(b => `<article class="bundle-card"><img src="${b.img}" alt="${b.title}"><div><p>${b.title}</p><strong>${b.price}</strong></div></article>`).join('');
+
+    if (!qs('#home-carousel')) {
+      const featured = products.slice(0, 8);
+      const track = featured.concat(featured).map(p => `
+        <article class="carousel-card">
+          <img src="${p.image}" alt="${p.name}">
+          <div>
+            <p>${p.category}</p>
+            <strong>${p.name}</strong>
+          </div>
+        </article>`).join('');
+      const section = document.createElement('section');
+      section.className = 'section';
+      section.id = 'home-carousel';
+      section.innerHTML = `
+        <div class="container">
+          <div class="section-head">
+            <div><h2>Featured Flow</h2><p>Continuous menu showcase.</p></div>
+          </div>
+          <div class="carousel-shell">
+            <div class="carousel-track">${track}</div>
+          </div>
+        </div>`;
+      qs('main.page').insertBefore(section, qs('main.page').children[1] || null);
+    }
   }
 
   function initShop() {
     const products = getProducts();
     const grid = qs('#shop-grid');
+    grid.innerHTML = renderProductSkeleton(8);
     const search = qs('#shop-search');
     const sort = qs('#shop-sort');
     const qp = new URLSearchParams(location.search).get('cat');
@@ -363,7 +647,9 @@ const NB = (() => {
       if (sort.value === 'price-desc') items.sort((a,b) => b.price - a.price);
       if (sort.value === 'top') items.sort((a,b) => b.rating - a.rating);
       qs('#shop-count').textContent = `${items.length}`;
-      grid.innerHTML = items.length ? items.map(productCard).join('') : `<div class="empty-state"><h3>No Match</h3></div>`;
+      grid.innerHTML = items.length ? items.map(productCard).join('') : `<div class="empty-state panel" data-animate="zoom"><h3>No Match</h3></div>`;
+      decorateMotion(grid);
+      startObserver();
     }
     qsa('[data-filter]').forEach(btn => {
       if (btn.dataset.filter === current) btn.classList.add('active');
@@ -421,6 +707,8 @@ const NB = (() => {
           </div>
         </div>
       </div>`;
+    decorateMotion(qs('#product-shell'));
+    startObserver();
     let qty = 1; let size = 'S'; let addon = 'None';
     qs('#qty-minus').onclick = () => { qty = Math.max(1, qty - 1); qs('#qty-value').textContent = qty; };
     qs('#qty-plus').onclick = () => { qty += 1; qs('#qty-value').textContent = qty; };
@@ -463,6 +751,8 @@ const NB = (() => {
             <a class="btn btn-dark wide" href="checkout.html">Checkout</a>
           </aside>
         </div>` : `<div class="empty-state"><h3>Cart Empty</h3><a class="btn btn-dark" href="shop.html">Menu</a></div>`;
+      decorateMotion(shell);
+      startObserver();
       qsa('[data-less]').forEach(b => b.onclick = () => { setCartQty(b.dataset.less, (getCart().find(x => x.key === b.dataset.less)?.qty || 1) - 1); render(); updateCartBadge(); });
       qsa('[data-more]').forEach(b => b.onclick = () => { setCartQty(b.dataset.more, (getCart().find(x => x.key === b.dataset.more)?.qty || 1) + 1); render(); updateCartBadge(); });
       qsa('[data-remove]').forEach(b => b.onclick = () => { removeCartItem(b.dataset.remove); render(); updateCartBadge(); });
@@ -478,49 +768,91 @@ const NB = (() => {
       return;
     }
     const profile = getProfile();
-    const subtotal = items.reduce((a,b) => a + b.total, 0);
-    const delivery = 49;
-    const total = subtotal + delivery;
+    const addresses = getAddresses();
+    let selectedAddressId = addresses[0]?.id || '';
+    let payment = 'Cash';
+    let promoCode = '';
+
+    function summaryHtml() {
+      const subtotal = items.reduce((a,b) => a + b.total, 0);
+      const delivery = 49;
+      const serviceFee = 15;
+      const promoState = applyPromoCode(promoCode, subtotal, delivery);
+      const total = Math.max(0, subtotal + delivery + serviceFee - promoState.discount);
+      return `${items.map(i => `<div class="sum-row"><span>${i.product.name} × ${i.qty}</span><strong>${money(i.total)}</strong></div>`).join('')}
+        <div class="sum-row"><span>Subtotal</span><strong>${money(subtotal)}</strong></div>
+        <div class="sum-row"><span>Delivery</span><strong>${money(delivery)}</strong></div>
+        <div class="sum-row"><span>Service Fee</span><strong>${money(serviceFee)}</strong></div>
+        <div class="sum-row"><span>Discount</span><strong>- ${money(promoState.discount || 0)}</strong></div>
+        <div class="sum-row total"><span>Total</span><strong>${money(total)}</strong></div>
+        <p class="muted small-text">${promoCode ? (promoState.promo ? `Promo applied: ${promoState.promo.code}` : promoState.error) : 'Try WELCOME10, LESS50, or FREESHIP.'}</p>`;
+    }
+
     shell.innerHTML = `
       <form class="checkout-grid" id="checkout-form">
         <section class="panel form-stack">
           <div class="field"><label>Name</label><input required name="name" value="${profile.name || ''}"></div>
           <div class="field"><label>Phone</label><input required name="phone" value="${profile.phone || ''}"></div>
-          <div class="field"><label>Address</label><textarea required name="address">${profile.address || ''}</textarea></div>
+          <div class="field"><label>Saved Address</label><select name="savedAddress" id="saved-address">${addresses.map(a => `<option value="${a.id}">${a.label} — ${a.text}</option>`).join('')}</select></div>
+          <div class="field"><label>Address</label><textarea required name="address" id="address-field">${addresses[0]?.text || profile.address || ''}</textarea><small class="muted" id="coverage-note">Delivery coverage will be checked before placing the order.</small></div>
+          <div class="field"><label>Promo Code</label><div class="inline-form"><input name="promo" id="promo-input" placeholder="Enter promo code"><button type="button" class="btn" id="apply-promo">Apply</button></div></div>
           <div class="field"><label>Payment</label><div class="pay-row"><button type="button" class="chip active" data-pay="Cash">Cash</button><button type="button" class="chip" data-pay="GCash">GCash</button></div></div>
+          <div class="field" id="gcash-proof-wrap" hidden><label>GCash Reference / Proof</label><input name="gcashProof" id="gcash-proof" placeholder="Reference number or uploaded proof note"></div>
           <button class="btn btn-dark wide" id="place-btn">Place Order</button>
         </section>
-        <aside class="panel sticky">
-          ${items.map(i => `<div class="sum-row"><span>${i.product.name} × ${i.qty}</span><strong>${money(i.total)}</strong></div>`).join('')}
-          <div class="sum-row"><span>Delivery</span><strong>${money(delivery)}</strong></div>
-          <div class="sum-row total"><span>Total</span><strong>${money(total)}</strong></div>
-        </aside>
+        <aside class="panel sticky" id="checkout-summary">${summaryHtml()}</aside>
       </form>`;
-    let payment = 'Cash';
-    qsa('[data-pay]').forEach(b => b.onclick = () => { qsa('[data-pay]').forEach(x => x.classList.remove('active')); b.classList.add('active'); payment = b.dataset.pay; });
+    decorateMotion(shell);
+    startObserver();
+    const summaryEl = qs('#checkout-summary');
+    const coverageNote = qs('#coverage-note');
+    function refreshSummary() { summaryEl.innerHTML = summaryHtml(); }
+    qs('#saved-address')?.addEventListener('change', e => {
+      selectedAddressId = e.target.value;
+      const picked = addresses.find(a => a.id === selectedAddressId);
+      if (picked) qs('#address-field').value = picked.text;
+      coverageNote.textContent = isCoveredAddress(qs('#address-field').value) ? 'Covered delivery area.' : 'Outside coverage area. Update the address to continue.';
+    });
+    qsa('[data-pay]').forEach(b => b.onclick = () => {
+      qsa('[data-pay]').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      payment = b.dataset.pay;
+      qs('#gcash-proof-wrap').hidden = payment !== 'GCash';
+    });
+    qs('#apply-promo').onclick = () => { promoCode = qs('#promo-input').value.trim().toUpperCase(); refreshSummary(); };
     qs('#checkout-form').onsubmit = e => {
       e.preventDefault();
       const fd = new FormData(e.target);
       const name = fd.get('name').trim();
       const phone = fd.get('phone').trim();
       const address = fd.get('address').trim();
+      const gcashProof = fd.get('gcashProof')?.trim() || '';
       if (!name || !phone || !address) return addToast('Check Fields');
+      if (!isCoveredAddress(address)) return addToast('Address outside delivery coverage');
+      if (payment === 'GCash' && !gcashProof) return addToast('Add GCash reference');
       set(STORAGE.profile, { name, phone, address });
-      const order = createOrder({ name, phone, address, payment, items: hydrateCart().map(i => ({ productId: i.productId, qty: i.qty })), status: 'Queued' });
+      const existing = getAddresses();
+      if (!existing.some(a => a.text.toLowerCase() === address.toLowerCase())) {
+        existing.unshift({ id: uid('ADR'), label: `Address ${existing.length + 1}`, text: address, covered: isCoveredAddress(address) });
+        set(STORAGE.addresses, existing.slice(0, 5));
+      }
+      const order = createOrder({ name, phone, address, payment, promoCode, addressId: selectedAddressId, paymentProof: gcashProof, items: hydrateCart().map(i => ({ productId: i.productId, qty: i.qty })) });
       updateCartBadge();
-      location.href = `success.html?id=${order.id}`;
+      ajaxNavigate(`success.html?id=${order.id}`);
     };
   }
 
   function initSuccess() {
     const id = new URLSearchParams(location.search).get('id');
-    qs('#success-shell').innerHTML = `<div class="success-card panel"><h1>Order Placed</h1><strong>${id || '-'}</strong><div class="page-actions"><a class="btn" href="receipt.html?id=${id}">Receipt</a><a class="btn btn-dark" href="tracking.html?id=${id}">Track Order</a></div></div>`;
+    qs('#success-shell').innerHTML = `<div class="success-card panel" data-animate="zoom"><h1>Order Placed</h1><strong>${id || '-'}</strong><div class="page-actions"><a class="btn" href="receipt.html?id=${id}">Receipt</a><a class="btn" href="order-details.html?id=${id}">Order Details</a><a class="btn btn-dark" href="tracking.html?id=${id}">Track Order</a></div></div>`;
+    decorateMotion(qs('#success-shell'));
+    startObserver();
   }
 
   function initReceipt() {
     const id = new URLSearchParams(location.search).get('id');
     const order = getOrders().find(o => o.id === id);
-    if (!order) return qs('#receipt-shell').innerHTML = `<div class="empty-state"><h3>No Receipt</h3></div>`;
+    if (!order) { qs('#receipt-shell').innerHTML = `<div class="empty-state panel" data-animate="zoom"><h3>No Receipt</h3></div>`; decorateMotion(qs('#receipt-shell')); startObserver(); return; }
     qs('#receipt-shell').innerHTML = `
       <article class="receipt panel">
         <div class="receipt-head"><h1>Receipt</h1><strong>${order.id}</strong></div>
@@ -528,6 +860,8 @@ const NB = (() => {
         <div class="sum-row"><span>Delivery</span><strong>${money(order.delivery)}</strong></div>
         <div class="sum-row total"><span>Total</span><strong>${money(order.total)}</strong></div>
       </article>`;
+    decorateMotion(qs('#receipt-shell'));
+    startObserver();
   }
 
   function initTracking() {
@@ -555,7 +889,9 @@ const NB = (() => {
             <div class="mini-card"><span>ETA</span><strong>${order.eta}</strong></div>
             <div class="mini-card"><span>Total</span><strong>${money(order.total)}</strong></div>
           </aside>
-        </div>` : `<div class="empty-state"><h3>No Order</h3></div>`;
+        </div>` : `<div class="empty-state panel" data-animate="zoom"><h3>No Order</h3></div>`;
+      decorateMotion(shell);
+      startObserver();
     }
     qs('#track-form').onsubmit = e => { e.preventDefault(); renderTrack(); };
     renderTrack();
@@ -570,6 +906,8 @@ const NB = (() => {
         <div class="field"><label>Address</label><textarea name="address">${p.address || ''}</textarea></div>
         <button class="btn btn-dark">Save</button>
       </form>`;
+    decorateMotion(qs('#account-shell'));
+    startObserver();
     qs('#profile-form').onsubmit = e => {
       e.preventDefault();
       const fd = new FormData(e.target);
@@ -581,12 +919,50 @@ const NB = (() => {
   function initFavorites() {
     const ids = getFavorites();
     const items = getProducts().filter(p => ids.includes(p.id));
-    qs('#favorites-grid').innerHTML = items.length ? items.map(productCard).join('') : `<div class="empty-state"><h3>No Favorites</h3></div>`;
+    qs('#favorites-grid').innerHTML = items.length ? items.map(productCard).join('') : `<div class="empty-state panel" data-animate="zoom"><h3>No Favorites</h3></div>`;
+    decorateMotion(qs('#favorites-grid'));
+    startObserver();
   }
 
   function initHistory() {
-    const orders = getOrders();
-    qs('#history-list').innerHTML = orders.length ? orders.map(o => `<a class="history-row panel" href="tracking.html?id=${o.id}"><div><strong>${o.id}</strong><p>${o.status}</p></div><div><strong>${money(o.total)}</strong><span>Reorder</span></div></a>`).join('') : `<div class="empty-state"><h3>No Orders</h3></div>`;
+    const list = qs('#history-list');
+    function render() {
+      const orders = getOrders();
+      list.innerHTML = orders.length ? orders.map(o => `<article class="history-row panel history-order-card"><div><strong>${o.id}</strong><p>${o.status} • ${o.paymentStatus || o.payment}</p></div><div><strong>${money(o.total)}</strong><span>${o.promoCode || 'No promo'}</span></div><div class="page-actions compact"><a class="btn" href="order-details.html?id=${o.id}">Details</a><button class="btn" data-reorder="${o.id}">Reorder</button><button class="btn" data-cancel-order="${o.id}" ${['Delivered','Cancelled'].includes(o.status) ? 'disabled' : ''}>Cancel</button></div></article>`).join('') : `<div class="empty-state panel" data-animate="zoom"><h3>No Orders</h3></div>`;
+      decorateMotion(list);
+      startObserver();
+      qsa('[data-reorder]').forEach(b => b.onclick = () => {
+        const order = getOrders().find(o => o.id === b.dataset.reorder);
+        if (!order) return;
+        const cart = getCart();
+        order.items.forEach(item => cart.push({ key: `${item.productId}-M-${uid('R')}`, productId: item.productId, qty: item.qty, size: 'M', addons: '' }));
+        set(STORAGE.cart, cart);
+        updateCartBadge();
+        addToast('Order added to cart');
+        ajaxNavigate('cart.html');
+      });
+      qsa('[data-cancel-order]').forEach(b => b.onclick = () => { cancelOrder(b.dataset.cancelOrder, 'Cancelled from order history'); render(); });
+    }
+    render();
+  }
+
+  function initOrderDetails() {
+    const id = new URLSearchParams(location.search).get('id');
+    const order = getOrders().find(o => o.id === id);
+    const shell = qs('#order-details-shell');
+    if (!shell) return;
+    if (!order) {
+      shell.innerHTML = `<div class="empty-state panel"><h3>Order not found</h3></div>`;
+      return;
+    }
+    shell.innerHTML = `<article class="panel detail-stack"><div class="order-head"><div><p>Order</p><h2>${order.id}</h2></div><span class="status ${order.status.toLowerCase().replace(/ /g,'-')}">${order.status}</span></div><div class="detail-grid"><div class="mini-card"><span>Payment</span><strong>${order.payment}</strong></div><div class="mini-card"><span>Payment Status</span><strong>${order.paymentStatus}</strong></div><div class="mini-card"><span>Address</span><strong>${order.customer.address}</strong></div></div>${order.items.map(i => `<div class="sum-row"><span>${i.name} × ${i.qty}</span><strong>${money(i.total)}</strong></div>`).join('')}<div class="sum-row"><span>Subtotal</span><strong>${money(order.subtotal)}</strong></div><div class="sum-row"><span>Delivery</span><strong>${money(order.delivery)}</strong></div><div class="sum-row"><span>Service Fee</span><strong>${money(order.serviceFee || 0)}</strong></div><div class="sum-row"><span>Discount</span><strong>- ${money(order.discount || 0)}</strong></div><div class="sum-row total"><span>Total</span><strong>${money(order.total)}</strong></div><div class="page-actions compact"><a class="btn" href="receipt.html?id=${order.id}">Receipt</a><a class="btn" href="tracking.html?id=${order.id}">Tracking</a><button class="btn" id="detail-reorder">Reorder</button></div></article>`;
+    qs('#detail-reorder')?.addEventListener('click', () => {
+      const cart = getCart();
+      order.items.forEach(item => cart.push({ key: `${item.productId}-M-${uid('R')}`, productId: item.productId, qty: item.qty, size: 'M', addons: '' }));
+      set(STORAGE.cart, cart);
+      updateCartBadge();
+      ajaxNavigate('cart.html');
+    });
   }
 
   function initSupport() {
@@ -601,64 +977,73 @@ const NB = (() => {
         <details class="panel"><summary>Payment</summary><p>Cash or GCash.</p></details>
         <details class="panel"><summary>Pickup</summary><p>Call store desk.</p></details>
       </div>`;
+    decorateMotion(qs('#support-shell'));
+    startObserver();
   }
 
   function initAdmin() {
-    const orders = getOrders();
     const products = getProducts();
     const riders = getRiders();
     const notes = get(STORAGE.notifications, []);
     const income = incomeRange();
-
-    const dayAppointments = orders.filter(o => o.status === 'On Delivery' && o.createdAt.slice(0,10) === today()).length;
-    qs('#admin-metrics').innerHTML = `
-      <div class="metric"><span>Orders</span><strong>${orders.length}</strong></div>
-      <div class="metric"><span>Day</span><strong>${money(income.day)}</strong></div>
-      <div class="metric"><span>Month</span><strong>${money(income.month)}</strong></div>
-      <div class="metric"><span>Year</span><strong>${money(income.year)}</strong></div>
-      <button id="appt-kpi" class="metric ${dayAppointments ? 'live' : ''}"><span>Today</span><strong>${dayAppointments}</strong>${dayAppointments ? '<em>Live</em>' : ''}</button>`;
-
-    const needs = orders.filter(o => o.status === 'Queued' || o.status === 'Preparing');
-    qs('#admin-overview').innerHTML = `
-      <section class="panel"><h3>Attention</h3>${needs.slice(0,4).map(o => `<div class="line-item"><span>${o.id}</span><strong>${o.status}</strong></div>`).join('') || '<div class="line-item"><span>Clear</span><strong>0</strong></div>'}</section>
-      <section class="panel"><h3>Low Stock</h3>${products.filter(p => p.stock < 15).slice(0,4).map(p => `<div class="line-item"><span>${p.name}</span><strong>${p.stock}</strong></div>`).join('')}</section>
-      <section class="panel"><h3>Riders</h3>${riders.slice(0,4).map(r => `<div class="line-item"><span>${r.name}</span><strong>${r.status}</strong></div>`).join('')}</section>`;
-
+    const allOrders = () => getOrders();
+    const dayAppointments = allOrders().filter(o => o.status === 'On Delivery' && o.createdAt.slice(0,10) === today()).length;
+    qs('#admin-metrics').innerHTML = `<div class="metric"><span>Orders</span><strong>${allOrders().length}</strong></div><div class="metric"><span>Day</span><strong>${money(income.day)}</strong></div><div class="metric"><span>Month</span><strong>${money(income.month)}</strong></div><div class="metric"><span>Year</span><strong>${money(income.year)}</strong></div><button id="appt-kpi" class="metric ${dayAppointments ? 'live' : ''}"><span>Today</span><strong>${dayAppointments}</strong>${dayAppointments ? '<em>Live</em>' : ''}</button>`;
+    const needs = allOrders().filter(o => ['Queued','Preparing','Pending Verification'].some(v => `${o.status} ${o.paymentStatus}`.includes(v)));
+    qs('#admin-overview').innerHTML = `<section class="panel"><h3>Attention</h3>${needs.slice(0,4).map(o => `<div class="line-item"><span>${o.id}</span><strong>${o.status}</strong></div>`).join('') || '<div class="line-item"><span>Clear</span><strong>0</strong></div>'}</section><section class="panel"><h3>Low Stock</h3>${products.filter(p => p.stock < 15).slice(0,4).map(p => `<div class="line-item"><span>${p.name}</span><strong>${p.stock}</strong></div>`).join('')}</section><section class="panel"><h3>Riders</h3>${riders.slice(0,4).map(r => `<div class="line-item"><span>${r.name}</span><strong>${r.status}</strong></div>`).join('')}</section>`;
+    if (!qs('#admin-order-filter')) qs('#orders-table').insertAdjacentHTML('beforebegin', `<div class="admin-toolbar"><select id="admin-order-filter"><option value="all">All Orders</option><option value="verification">Needs Verification</option><option value="cancelled">Cancelled</option></select><button class="btn" id="admin-export">Export CSV</button></div>`);
     let filterToday = false;
+    function filteredOrders() {
+      const base = filterToday ? allOrders().filter(o => o.status === 'On Delivery' && o.createdAt.slice(0,10) === today()) : allOrders();
+      const mode = qs('#admin-order-filter')?.value || 'all';
+      if (mode === 'verification') return base.filter(o => o.paymentStatus === 'Pending Verification');
+      if (mode === 'cancelled') return base.filter(o => o.status === 'Cancelled');
+      return base;
+    }
     function renderOrders() {
-      const data = filterToday ? orders.filter(o => o.status === 'On Delivery' && o.createdAt.slice(0,10) === today()) : orders;
-      qs('#orders-table').innerHTML = `<table><thead><tr><th>ID</th><th>Items</th><th>Total</th><th>Status</th><th>Rider</th><th></th></tr></thead><tbody>${data.map(o => `<tr><td>${o.id}</td><td>${o.items.length}</td><td>${money(o.total)}</td><td><span class="status ${o.status.toLowerCase().replace(/ /g,'-')}">${o.status}</span></td><td>${o.rider?.name || '-'}</td><td><button class="text-btn" data-view-order="${o.id}">View</button></td></tr>`).join('')}</tbody></table>`;
-      qs('#orders-board').innerHTML = ['Queued','Preparing','On Delivery','Delivered'].map(st => `<div class="board-col"><div class="board-head">${st}</div>${data.filter(o => o.status === st).map(o => `<button class="board-card" data-view-order="${o.id}"><strong>${o.id}</strong><span>${money(o.total)}</span><small>${o.rider?.name || '-'}</small></button>`).join('') || '<div class="board-empty">—</div>'}</div>`).join('');
+      const data = filteredOrders();
+      qs('#orders-table').innerHTML = `<table><thead><tr><th>ID</th><th>Items</th><th>Total</th><th>Status</th><th>Payment</th><th>Rider</th><th></th></tr></thead><tbody>${data.map(o => `<tr><td>${o.id}</td><td>${o.items.length}</td><td>${money(o.total)}</td><td><span class="status ${o.status.toLowerCase().replace(/ /g,'-')}">${o.status}</span></td><td>${o.paymentStatus}</td><td>${o.rider?.name || '-'}</td><td><button class="text-btn" data-view-order="${o.id}">View</button></td></tr>`).join('')}</tbody></table>`;
+      qs('#orders-board').innerHTML = ['Queued','Preparing','On Delivery','Delivered','Cancelled'].map(st => `<div class="board-col"><div class="board-head">${st}</div>${data.filter(o => o.status === st).map(o => `<button class="board-card" data-view-order="${o.id}"><strong>${o.id}</strong><span>${money(o.total)}</span><small>${o.paymentStatus}</small></button>`).join('') || '<div class="board-empty">—</div>'}</div>`).join('');
       qsa('[data-view-order]').forEach(b => b.onclick = () => openOrderModal(b.dataset.viewOrder));
     }
     renderOrders();
-
+    qs('#admin-order-filter')?.addEventListener('change', renderOrders);
+    qs('#admin-export')?.addEventListener('click', () => {
+      const rows = [['Order ID','Status','Payment Status','Total']].concat(filteredOrders().map(o => [o.id,o.status,o.paymentStatus,o.total]));
+      const csv = rows.map(r => r.map(v => '"' + String(v).replaceAll('\"', '\"\"') + '"').join(',')).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'noir-bean-orders.csv';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    });
     qs('#inventory-table').innerHTML = `<table><thead><tr><th>Name</th><th>Category</th><th>Stock</th><th>Price</th><th></th></tr></thead><tbody>${products.map(p => `<tr><td>${p.name}</td><td>${p.category}</td><td>${p.stock < 15 ? `<span class="status low">${p.stock}</span>` : p.stock}</td><td>${money(p.price)}</td><td><button class="text-btn">Edit</button></td></tr>`).join('')}</tbody></table>`;
-
     qs('#riders-grid').innerHTML = riders.map(r => `<article class="panel rider-card"><div><h3>${r.name}</h3><p>${r.zone}</p></div><span class="status ${r.status.toLowerCase()}">${r.status}</span><button class="btn" data-rider-toggle="${r.id}">Toggle</button></article>`).join('');
     qsa('[data-rider-toggle]').forEach(b => b.onclick = () => {
       const list = getRiders();
       const rider = list.find(r => r.id === b.dataset.riderToggle);
       rider.status = rider.status === 'Available' ? 'Offline' : 'Available';
       set(STORAGE.riders, list);
-      location.reload();
+      initAdmin();
     });
-
     qs('#notes-list').innerHTML = notes.map(n => `<div class="note-item"><span>${n.text}</span><strong>${n.time}</strong></div>`).join('');
     qs('#chart-bars').innerHTML = [32,52,45,61,55,74,63].map(v => `<div class="bar" style="height:${v}%"></div>`).join('');
     qs('#top-items').innerHTML = products.slice(0,6).map(p => `<div class="line-item"><span>${p.name}</span><strong>${Math.max(12, 40 - p.stock)}</strong></div>`).join('');
-
     qs('#appt-kpi')?.addEventListener('click', (e) => {
       if (!dayAppointments) return;
       filterToday = !filterToday;
       e.currentTarget.classList.toggle('cancel', filterToday);
       renderOrders();
     });
-
+    decorateMotion(document);
+    startObserver();
     qsa('[data-admin-tab]').forEach(btn => btn.onclick = () => {
       qsa('[data-admin-tab]').forEach(x => x.classList.remove('active'));
       btn.classList.add('active');
       qsa('[data-admin-panel]').forEach(p => p.hidden = p.id !== btn.dataset.adminTab);
+      decorateMotion(document);
+      startObserver();
     });
   }
 
@@ -672,28 +1057,38 @@ const NB = (() => {
         <div class="modal-head"><h3>${o.id}</h3><button class="btn btn-icon" data-close-modal>${icon('close')}</button></div>
         <div class="modal-body">
           <div class="sum-row"><span>Status</span><strong>${o.status}</strong></div>
+          <div class="sum-row"><span>Payment</span><strong>${o.paymentStatus}</strong></div>
           <div class="sum-row"><span>Rider</span><strong>${o.rider?.name || '-'}</strong></div>
           <div class="sum-row"><span>Total</span><strong>${money(o.total)}</strong></div>
           ${o.items.map(i => `<div class="sum-row"><span>${i.name} × ${i.qty}</span><strong>${money(i.total)}</strong></div>`).join('')}
         </div>
-        <div class="modal-foot">
+        <div class="modal-foot modal-actions-wrap">
           <button class="btn" data-next-status="Preparing" ${o.status !== 'Queued' ? 'disabled' : ''}>Prepare</button>
           <button class="btn" data-next-status="On Delivery" ${o.status !== 'Preparing' ? 'disabled' : ''}>Dispatch</button>
           <button class="btn btn-dark" data-next-status="Delivered" ${o.status !== 'On Delivery' ? 'disabled' : ''}>Complete</button>
+          <button class="btn" data-payment-action="verify" ${o.paymentStatus !== 'Pending Verification' ? 'disabled' : ''}>Verify GCash</button>
+          <button class="btn" data-payment-action="reject" ${o.paymentStatus !== 'Pending Verification' ? 'disabled' : ''}>Reject</button>
+          <button class="btn" data-cancel-action ${['Delivered','Cancelled'].includes(o.status) ? 'disabled' : ''}>Cancel Order</button>
         </div>
       </div>`;
     modal.classList.add('open');
     qsa('[data-close-modal]', modal).forEach(b => b.onclick = () => modal.classList.remove('open'));
-    qsa('[data-next-status]', modal).forEach(b => b.onclick = () => { updateOrderStatus(id, b.dataset.nextStatus); modal.classList.remove('open'); location.reload(); });
+    qsa('[data-next-status]', modal).forEach(b => b.onclick = () => { updateOrderStatus(id, b.dataset.nextStatus); modal.classList.remove('open'); initAdmin(); });
+    qsa('[data-payment-action]', modal).forEach(b => b.onclick = () => { setOrderPaymentStatus(id, b.dataset.paymentAction === 'verify' ? 'Verified' : 'Rejected'); modal.classList.remove('open'); initAdmin(); });
+    qs('[data-cancel-action]', modal)?.addEventListener('click', () => { cancelOrder(id, 'Cancelled by admin'); modal.classList.remove('open'); initAdmin(); });
   }
 
   function route() {
     mountShared();
+    wirePageTransitions();
+    decorateMotion(document);
     const page = document.body.dataset.page;
-    ({ home:initHome, shop:initShop, product:initProduct, cart:initCart, checkout:initCheckout, success:initSuccess, tracking:initTracking, account:initAccount, favorites:initFavorites, history:initHistory, support:initSupport, admin:initAdmin, receipt:initReceipt }[page] || (()=>{}))();
+    ({ home:initHome, shop:initShop, product:initProduct, cart:initCart, checkout:initCheckout, success:initSuccess, tracking:initTracking, account:initAccount, favorites:initFavorites, history:initHistory, support:initSupport, admin:initAdmin, receipt:initReceipt, 'order-details':initOrderDetails }[page] || (()=>{}))();
+    startObserver();
+    setTimeout(hidePageLoader, 120);
   }
 
-  return { route, icon };
+  return { route, icon, ajaxNavigate };
 })();
 
 document.addEventListener('DOMContentLoaded', NB.route);
